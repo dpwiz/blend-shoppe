@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Image as ImageIcon, X, RefreshCw, Sliders, Music } from 'lucide-react';
+import { Upload, Image as ImageIcon, X, RefreshCw, Sliders, Music, Activity } from 'lucide-react';
 import { get, set, del } from 'idb-keyval';
 
 const vsSource = `
@@ -345,6 +345,118 @@ export default function App() {
   const audioInputRefs = [useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null)];
   const audioRefs = [useRef<HTMLAudioElement>(null), useRef<HTMLAudioElement>(null)];
   const [isDbLoaded, setIsDbLoaded] = useState(false);
+
+  const [midiInputs, setMidiInputs] = useState<any[]>([]);
+  const [selectedMidiInputId, setSelectedMidiInputId] = useState<string>('');
+  const [midiLog, setMidiLog] = useState<{ id: number, text: string }[]>([]);
+  const midiLogIdRef = useRef(0);
+
+  useEffect(() => {
+    if (navigator.requestMIDIAccess) {
+      navigator.requestMIDIAccess().then(
+        (midiAccess) => {
+          const updateInputs = () => {
+            const inputs = Array.from(midiAccess.inputs.values());
+            setMidiInputs(inputs);
+            if (inputs.length > 0 && !selectedMidiInputId) {
+              setSelectedMidiInputId(inputs[0].id);
+            }
+          };
+          updateInputs();
+          midiAccess.onstatechange = updateInputs;
+        },
+        (err) => console.error("MIDI access failed", err)
+      );
+    }
+  }, [selectedMidiInputId]);
+
+  useEffect(() => {
+    if (!selectedMidiInputId) return;
+    
+    let midiAccess: any = null;
+    let selectedInput: any = null;
+
+    const handleMidiMessage = (event: any) => {
+      const [status, data1, data2] = event.data;
+      const isCC = status >= 176 && status <= 191;
+      const channel = status & 0x0F;
+      
+      if (isCC) {
+        const logEntry = `CH${channel + 1} CC${data1}: ${data2}`;
+        const id = midiLogIdRef.current++;
+        setMidiLog(prev => [{ id, text: logEntry }, ...prev].slice(0, 8));
+
+        // Map CC to parameters (only for CH1, which is channel 0)
+        if (channel === 0) {
+          // CC 0-3: Image Slot Gain (0 to ~2.0, 64 is exactly 1.0)
+          if (data1 >= 0 && data1 <= 3) {
+            const slotIndex = data1;
+            const newWeight = data2 / 64.0;
+            setImageWeights(prev => {
+              const next = [...prev];
+              next[slotIndex] = newWeight;
+              return next;
+            });
+          }
+          // CC 16-19: Image Slot Balance (0.0 to 1.0)
+          else if (data1 >= 16 && data1 <= 19) {
+            const slotIndex = data1 - 16;
+            const newBalance = data2 / 127.0;
+            setImageBalances(prev => {
+              const next = [...prev];
+              next[slotIndex] = newBalance;
+              return next;
+            });
+          }
+          // CC 6-7: Audio Slot Volume (0.0 to 1.0)
+          else if (data1 === 6 || data1 === 7) {
+            const slotIndex = data1 - 6;
+            const newVolume = data2 / 127.0;
+            setAudioTracks(prev => {
+              const next = [...prev];
+              next[slotIndex] = { ...next[slotIndex], volume: newVolume };
+              return next;
+            });
+          }
+          // CC 22-23: Audio Slot Speed
+          else if (data1 === 22 || data1 === 23) {
+            const slotIndex = data1 - 22;
+            let newSpeed;
+            if (data2 === 64) {
+              newSpeed = 1.0;
+            } else if (data2 < 64) {
+              // 0..63 maps to 0.25x .. ~0.98x (log2: -2 to <0)
+              newSpeed = Math.pow(2, -2 + (data2 / 64) * 2);
+            } else {
+              // 65..127 maps to ~1.02x .. 4.0x (log2: >0 to 2)
+              newSpeed = Math.pow(2, ((data2 - 64) / 63) * 2);
+            }
+            setAudioTracks(prev => {
+              const next = [...prev];
+              next[slotIndex] = { ...next[slotIndex], playbackRate: newSpeed };
+              return next;
+            });
+          }
+        }
+      }
+    };
+
+    if (navigator.requestMIDIAccess) {
+      navigator.requestMIDIAccess().then(access => {
+        midiAccess = access;
+        selectedInput = access.inputs.get(selectedMidiInputId) || null;
+        if (selectedInput) {
+          selectedInput.onmidimessage = handleMidiMessage;
+        }
+      });
+    }
+
+    return () => {
+      if (selectedInput) {
+        selectedInput.onmidimessage = null;
+      }
+    };
+  }, [selectedMidiInputId]);
 
   useEffect(() => {
     const loadFromDB = async () => {
@@ -956,6 +1068,37 @@ export default function App() {
                   <div className="py-2 text-zinc-500 text-sm font-medium">
                     Add images to start
                   </div>
+                )}
+              </div>
+            </div>
+
+            {/* MIDI Settings Panel */}
+            <div className="space-y-3 bg-zinc-900/60 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/10">
+              <div className="flex items-center gap-2 mb-2">
+                <Activity size={18} className="text-zinc-300" />
+                <h2 className="text-sm font-medium text-zinc-300 uppercase tracking-wider">MIDI Controller</h2>
+              </div>
+              
+              <select 
+                value={selectedMidiInputId}
+                onChange={(e) => setSelectedMidiInputId(e.target.value)}
+                className="w-full bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 transition-colors"
+              >
+                <option value="">Select MIDI Device...</option>
+                {midiInputs.map(input => (
+                  <option key={input.id} value={input.id}>{input.name || `Device ${input.id}`}</option>
+                ))}
+              </select>
+
+              <div className="bg-zinc-950/50 rounded-lg p-3 h-32 overflow-y-auto font-mono text-xs text-zinc-400 flex flex-col gap-1 border border-white/5">
+                {midiLog.length === 0 ? (
+                  <span className="text-zinc-600 italic">Waiting for CC events...</span>
+                ) : (
+                  midiLog.map((log, i) => (
+                    <div key={log.id} className={i === 0 ? "text-emerald-400 font-medium" : "opacity-70"}>
+                      {log.text}
+                    </div>
+                  ))
                 )}
               </div>
             </div>
