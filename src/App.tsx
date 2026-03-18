@@ -304,6 +304,14 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeSlot, setActiveSlot] = useState<{ index: number, isAlt: boolean } | null>(null);
 
+  const imageWeightsRef = useRef(imageWeights);
+  const imageBalancesRef = useRef(imageBalances);
+  const noiseParamsRef = useRef(noiseParams);
+
+  useEffect(() => { imageWeightsRef.current = imageWeights; }, [imageWeights]);
+  useEffect(() => { imageBalancesRef.current = imageBalances; }, [imageBalances]);
+  useEffect(() => { noiseParamsRef.current = noiseParams; }, [noiseParams]);
+
   const [audioTracks, setAudioTracks] = useState(() => {
     const defaultTracks = [
       { src: null as string | null, name: null as string | null, volume: 1.0, playbackRate: 1.0, preservesPitch: true, offset: 0, duration: 0 },
@@ -768,28 +776,6 @@ export default function App() {
     gl.uniform1i(tex3AltLoc, 6);
     gl.uniform1i(tex4AltLoc, 7);
     
-    gl.uniform4f(
-      activeChannelsLoc, 
-      loadedImages[0] ? imageWeights[0] : 0.0,
-      loadedImages[1] ? imageWeights[1] : 0.0,
-      loadedImages[2] ? imageWeights[2] : 0.0,
-      loadedImages[3] ? imageWeights[3] : 0.0
-    );
-
-    gl.uniform4f(
-      balancesLoc,
-      imageBalances[0],
-      imageBalances[1],
-      imageBalances[2],
-      imageBalances[3]
-    );
-    
-    gl.uniform1f(uNoiseScaleLoc, noiseParams.scale);
-    gl.uniform1f(uTimeSpeedLoc, noiseParams.timeSpeed);
-    gl.uniform1f(uTimeOffsetLoc, noiseParams.timeOffset);
-    gl.uniform1f(uWarpStrengthLoc, noiseParams.warpStrength);
-    gl.uniform2f(uContrastLoc, noiseParams.contrastMin, noiseParams.contrastMax);
-
     const timeLoc = gl.getUniformLocation(program, "time");
     const resLoc = gl.getUniformLocation(program, "resolution");
 
@@ -806,6 +792,28 @@ export default function App() {
       gl.clearColor(0, 0, 0, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
+      gl.uniform4f(
+        activeChannelsLoc, 
+        loadedImages[0] ? imageWeightsRef.current[0] : 0.0,
+        loadedImages[1] ? imageWeightsRef.current[1] : 0.0,
+        loadedImages[2] ? imageWeightsRef.current[2] : 0.0,
+        loadedImages[3] ? imageWeightsRef.current[3] : 0.0
+      );
+
+      gl.uniform4f(
+        balancesLoc,
+        imageBalancesRef.current[0],
+        imageBalancesRef.current[1],
+        imageBalancesRef.current[2],
+        imageBalancesRef.current[3]
+      );
+      
+      gl.uniform1f(uNoiseScaleLoc, noiseParamsRef.current.scale);
+      gl.uniform1f(uTimeSpeedLoc, noiseParamsRef.current.timeSpeed);
+      gl.uniform1f(uTimeOffsetLoc, noiseParamsRef.current.timeOffset);
+      gl.uniform1f(uWarpStrengthLoc, noiseParamsRef.current.warpStrength);
+      gl.uniform2f(uContrastLoc, noiseParamsRef.current.contrastMin, noiseParamsRef.current.contrastMax);
+
       gl.uniform1f(timeLoc, time);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -817,7 +825,7 @@ export default function App() {
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [loadedImages, loadedAltImages, noiseParams, imageWeights, imageBalances]);
+  }, [loadedImages, loadedAltImages]);
 
   const activeImageCount = images.filter(img => img !== null).length;
   const activeLoadedCount = loadedImages.filter(img => img !== null).length;
