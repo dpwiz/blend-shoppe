@@ -24,11 +24,17 @@ uniform sampler2D tex1;
 uniform sampler2D tex2;
 uniform sampler2D tex3;
 uniform sampler2D tex4;
+uniform sampler2D tex1_alt;
+uniform sampler2D tex2_alt;
+uniform sampler2D tex3_alt;
+uniform sampler2D tex4_alt;
+uniform vec4 u_balances;
 uniform float time;
 uniform vec2 resolution;
 uniform vec4 activeChannels;
 uniform float u_noiseScale;
 uniform float u_timeSpeed;
+uniform float u_timeOffset;
 uniform float u_warpStrength;
 uniform vec2 u_contrast;
 
@@ -73,7 +79,7 @@ void main() {
     }
     
     float scale = u_noiseScale;
-    float t = time * u_timeSpeed;
+    float t = time * u_timeSpeed + u_timeOffset;
     
     // Domain warping
     vec2 q = vec2(
@@ -118,10 +124,20 @@ void main() {
         }
     }
     
-    vec4 c1 = texture2D(tex1, uv);
-    vec4 c2 = texture2D(tex2, uv);
-    vec4 c3 = texture2D(tex3, uv);
-    vec4 c4 = texture2D(tex4, uv);
+    vec4 c1_main = texture2D(tex1, uv);
+    vec4 c2_main = texture2D(tex2, uv);
+    vec4 c3_main = texture2D(tex3, uv);
+    vec4 c4_main = texture2D(tex4, uv);
+    
+    vec4 c1_alt = texture2D(tex1_alt, uv);
+    vec4 c2_alt = texture2D(tex2_alt, uv);
+    vec4 c3_alt = texture2D(tex3_alt, uv);
+    vec4 c4_alt = texture2D(tex4_alt, uv);
+    
+    vec4 c1 = mix(c1_main, c1_alt, u_balances.x);
+    vec4 c2 = mix(c2_main, c2_alt, u_balances.y);
+    vec4 c3 = mix(c3_main, c3_alt, u_balances.z);
+    vec4 c4 = mix(c4_main, c4_alt, u_balances.w);
     
     vec3 finalColor = c1.rgb * factors.x + c2.rgb * factors.y + c3.rgb * factors.z + c4.rgb * factors.w;
     gl_FragColor = vec4(finalColor, 1.0);
@@ -195,6 +211,8 @@ const createSolidImage = (color: string) => {
   return canvas.toDataURL('image/png');
 };
 
+const DEFAULT_ALT_IMAGE = createSolidImage('#000000');
+
 export default function App() {
   const [images, setImages] = useState<(string | null)[]>(() => [
     createSolidImage('#ff0000'),
@@ -202,14 +220,63 @@ export default function App() {
     createSolidImage('#0000ff'),
     createSolidImage('#ffff00')
   ]);
+  const [altImages, setAltImages] = useState<(string | null)[]>(() => [
+    DEFAULT_ALT_IMAGE,
+    DEFAULT_ALT_IMAGE,
+    DEFAULT_ALT_IMAGE,
+    DEFAULT_ALT_IMAGE
+  ]);
   const [loadedImages, setLoadedImages] = useState<(HTMLImageElement | null)[]>([null, null, null, null]);
+  const [loadedAltImages, setLoadedAltImages] = useState<(HTMLImageElement | null)[]>([null, null, null, null]);
   const [isStarted, setIsStarted] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [imageWeights, setImageWeights] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('imageWeights');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error('Failed to parse imageWeights from sessionStorage', e);
+        }
+      }
+    }
+    return [1.0, 1.0, 1.0, 1.0];
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('imageWeights', JSON.stringify(imageWeights));
+    }
+  }, [imageWeights]);
+
+  const [imageBalances, setImageBalances] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('imageBalances');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error('Failed to parse imageBalances from sessionStorage', e);
+        }
+      }
+    }
+    return [0.0, 0.0, 0.0, 0.0];
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('imageBalances', JSON.stringify(imageBalances));
+    }
+  }, [imageBalances]);
+
   const [noiseParams, setNoiseParams] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = sessionStorage.getItem('noiseParams');
       if (saved) {
         try {
-          return JSON.parse(saved);
+          const parsed = JSON.parse(saved);
+          return { timeOffset: 0.0, ...parsed };
         } catch (e) {
           console.error('Failed to parse noiseParams from sessionStorage', e);
         }
@@ -218,6 +285,7 @@ export default function App() {
     return {
       scale: 3.0,
       timeSpeed: 0.2,
+      timeOffset: 0.0,
       warpStrength: 4.0,
       contrastMin: 0.3,
       contrastMax: 0.7
@@ -234,7 +302,7 @@ export default function App() {
   const startTimeRef = useRef<number>(0);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeSlot, setActiveSlot] = useState<number | null>(null);
+  const [activeSlot, setActiveSlot] = useState<{ index: number, isAlt: boolean } | null>(null);
 
   const [audioTracks, setAudioTracks] = useState(() => {
     const defaultTracks = [
@@ -298,6 +366,23 @@ export default function App() {
         }
         setImages(defaultImages);
 
+        const defaultAltImages = [
+          DEFAULT_ALT_IMAGE,
+          DEFAULT_ALT_IMAGE,
+          DEFAULT_ALT_IMAGE,
+          DEFAULT_ALT_IMAGE
+        ];
+        
+        for (let i = 0; i < 4; i++) {
+          const file = await get(`altImage_${i}`);
+          if (file instanceof File || file instanceof Blob) {
+            defaultAltImages[i] = URL.createObjectURL(file);
+          } else if (file === 'empty') {
+            defaultAltImages[i] = DEFAULT_ALT_IMAGE;
+          }
+        }
+        setAltImages(defaultAltImages);
+
         const audioFiles = await Promise.all([get('audio_0'), get('audio_1')]);
         setAudioTracks(prev => {
           const next = [...prev];
@@ -351,8 +436,8 @@ export default function App() {
     }
   }, []);
 
-  const handleSlotClick = (index: number) => {
-    setActiveSlot(index);
+  const handleSlotClick = (index: number, isAlt: boolean = false) => {
+    setActiveSlot({ index, isAlt });
     fileInputRef.current?.click();
   };
 
@@ -361,19 +446,46 @@ export default function App() {
       const file = e.target.files[0];
       if (file.type.startsWith('image/')) {
         const url = URL.createObjectURL(file);
-        setImages(prev => {
-          const next = [...prev];
-          if (activeSlot !== null) {
-            next[activeSlot] = url;
-            set(`image_${activeSlot}`, file);
+        if (activeSlot) {
+          if (activeSlot.isAlt) {
+            setAltImages(prev => {
+              const next = [...prev];
+              next[activeSlot.index] = url;
+              set(`altImage_${activeSlot.index}`, file);
+              return next;
+            });
+          } else {
+            setImages(prev => {
+              const next = [...prev];
+              next[activeSlot.index] = url;
+              set(`image_${activeSlot.index}`, file);
+              return next;
+            });
           }
-          return next;
-        });
+        }
       }
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
     setActiveSlot(null);
   }, [activeSlot]);
+
+  const removeImage = (index: number, isAlt: boolean = false) => {
+    if (isAlt) {
+      setAltImages(prev => {
+        const next = [...prev];
+        next[index] = DEFAULT_ALT_IMAGE;
+        set(`altImage_${index}`, 'empty');
+        return next;
+      });
+    } else {
+      setImages(prev => {
+        const next = [...prev];
+        next[index] = null;
+        set(`image_${index}`, 'empty');
+        return next;
+      });
+    }
+  };
 
   const handleAudioInput = useCallback((index: number) => (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -401,14 +513,7 @@ export default function App() {
     });
   };
 
-  const removeImage = (index: number) => {
-    setImages(prev => {
-      const next = [...prev];
-      next[index] = null;
-      set(`image_${index}`, 'empty');
-      return next;
-    });
-  };
+
 
   useEffect(() => {
     const activeImages = images.filter(src => src !== null);
@@ -443,6 +548,40 @@ export default function App() {
       setLoadedImages([null, null, null, null]);
     }
   }, [images]);
+
+  useEffect(() => {
+    const activeImages = altImages.filter(src => src !== null);
+    if (activeImages.length > 0) {
+      let loadedCount = 0;
+      const imgs: (HTMLImageElement | null)[] = [null, null, null, null];
+      
+      altImages.forEach((src, i) => {
+        if (src === null) return;
+        
+        const img = new Image();
+        img.onload = () => {
+          imgs[i] = img;
+          loadedCount++;
+          if (loadedCount === activeImages.length) {
+            setLoadedAltImages([...imgs]);
+          }
+        };
+        img.onerror = (e) => {
+          console.error("Alt image load error", e);
+          const dummy = new Image();
+          dummy.src = DEFAULT_ALT_IMAGE!;
+          imgs[i] = dummy;
+          loadedCount++;
+          if (loadedCount === activeImages.length) {
+            setLoadedAltImages([...imgs]);
+          }
+        };
+        img.src = src;
+      });
+    } else {
+      setLoadedAltImages([null, null, null, null]);
+    }
+  }, [altImages]);
 
   useEffect(() => {
     const activeLoadedCount = loadedImages.filter(img => img !== null).length;
@@ -486,15 +625,25 @@ export default function App() {
     createTexture(gl, loadedImages[1] || undefined, 1);
     createTexture(gl, loadedImages[2] || undefined, 2);
     createTexture(gl, loadedImages[3] || undefined, 3);
+    createTexture(gl, loadedAltImages[0] || undefined, 4);
+    createTexture(gl, loadedAltImages[1] || undefined, 5);
+    createTexture(gl, loadedAltImages[2] || undefined, 6);
+    createTexture(gl, loadedAltImages[3] || undefined, 7);
 
     const tex1Loc = gl.getUniformLocation(program, "tex1");
     const tex2Loc = gl.getUniformLocation(program, "tex2");
     const tex3Loc = gl.getUniformLocation(program, "tex3");
     const tex4Loc = gl.getUniformLocation(program, "tex4");
+    const tex1AltLoc = gl.getUniformLocation(program, "tex1_alt");
+    const tex2AltLoc = gl.getUniformLocation(program, "tex2_alt");
+    const tex3AltLoc = gl.getUniformLocation(program, "tex3_alt");
+    const tex4AltLoc = gl.getUniformLocation(program, "tex4_alt");
     const activeChannelsLoc = gl.getUniformLocation(program, "activeChannels");
+    const balancesLoc = gl.getUniformLocation(program, "u_balances");
     
     const uNoiseScaleLoc = gl.getUniformLocation(program, "u_noiseScale");
     const uTimeSpeedLoc = gl.getUniformLocation(program, "u_timeSpeed");
+    const uTimeOffsetLoc = gl.getUniformLocation(program, "u_timeOffset");
     const uWarpStrengthLoc = gl.getUniformLocation(program, "u_warpStrength");
     const uContrastLoc = gl.getUniformLocation(program, "u_contrast");
     
@@ -502,17 +651,30 @@ export default function App() {
     gl.uniform1i(tex2Loc, 1);
     gl.uniform1i(tex3Loc, 2);
     gl.uniform1i(tex4Loc, 3);
+    gl.uniform1i(tex1AltLoc, 4);
+    gl.uniform1i(tex2AltLoc, 5);
+    gl.uniform1i(tex3AltLoc, 6);
+    gl.uniform1i(tex4AltLoc, 7);
     
     gl.uniform4f(
       activeChannelsLoc, 
-      loadedImages[0] ? 1.0 : 0.0,
-      loadedImages[1] ? 1.0 : 0.0,
-      loadedImages[2] ? 1.0 : 0.0,
-      loadedImages[3] ? 1.0 : 0.0
+      loadedImages[0] ? imageWeights[0] : 0.0,
+      loadedImages[1] ? imageWeights[1] : 0.0,
+      loadedImages[2] ? imageWeights[2] : 0.0,
+      loadedImages[3] ? imageWeights[3] : 0.0
+    );
+
+    gl.uniform4f(
+      balancesLoc,
+      imageBalances[0],
+      imageBalances[1],
+      imageBalances[2],
+      imageBalances[3]
     );
     
     gl.uniform1f(uNoiseScaleLoc, noiseParams.scale);
     gl.uniform1f(uTimeSpeedLoc, noiseParams.timeSpeed);
+    gl.uniform1f(uTimeOffsetLoc, noiseParams.timeOffset);
     gl.uniform1f(uWarpStrengthLoc, noiseParams.warpStrength);
     gl.uniform2f(uContrastLoc, noiseParams.contrastMin, noiseParams.contrastMax);
 
@@ -543,7 +705,7 @@ export default function App() {
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [loadedImages, noiseParams]);
+  }, [loadedImages, loadedAltImages, noiseParams, imageWeights, imageBalances]);
 
   const activeImageCount = images.filter(img => img !== null).length;
   const activeLoadedCount = loadedImages.filter(img => img !== null).length;
@@ -562,29 +724,40 @@ export default function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center relative overflow-hidden">
       {/* Background / Fullscreen Canvas */}
-      <div className={`fixed inset-0 z-0 transition-all duration-700 ${isStarted ? 'bg-black' : 'opacity-30 blur-sm pointer-events-none'}`}>
+      <div className={`fixed inset-0 z-0 transition-all duration-700 ${isStarted ? 'bg-black' : isPreviewing ? 'opacity-100 blur-none pointer-events-none' : 'opacity-30 blur-sm pointer-events-none'}`}>
         <canvas
           ref={canvasRef}
-          className={`w-full h-full transition-all duration-700 ${isStarted ? 'object-contain' : 'object-cover'}`}
+          className="w-full h-full transition-all duration-700 object-cover"
         />
       </div>
 
       {/* Fullscreen Close Button */}
       {isStarted && (
-        <button 
-          onClick={() => {
-            setIsStarted(false);
-            audioRefs.forEach(ref => {
-              if (ref.current) {
-                ref.current.pause();
-              }
-            });
-          }}
-          className="absolute top-4 right-4 z-50 bg-white/10 hover:bg-white/20 text-white p-2 rounded-full backdrop-blur-md transition-colors"
-          title="Go Back"
-        >
-          <X size={24} />
-        </button>
+        <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+          <button 
+            onClick={() => {
+              setIsStarted(false);
+            }}
+            className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-full backdrop-blur-md transition-colors text-sm font-medium"
+            title="Go Back (Keep Playing)"
+          >
+            Back (Playing)
+          </button>
+          <button 
+            onClick={() => {
+              setIsStarted(false);
+              audioRefs.forEach(ref => {
+                if (ref.current) {
+                  ref.current.pause();
+                }
+              });
+            }}
+            className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-full backdrop-blur-md transition-colors"
+            title="Go Back & Pause"
+          >
+            <X size={24} />
+          </button>
+        </div>
       )}
 
       {/* Settings UI */}
@@ -599,29 +772,99 @@ export default function App() {
             onDragLeave={() => setIsDragging(false)}
             onDrop={handleDrop}
           >
-            <div className="grid grid-cols-2 gap-4 mb-4 flex-grow">
+            <div className="grid grid-cols-1 gap-6 mb-4 flex-grow">
             {images.map((src, i) => (
-              <div 
-                key={i} 
-                className={`relative aspect-square rounded-xl overflow-hidden border-2 transition-colors cursor-pointer flex items-center justify-center ${
-                  src ? 'bg-zinc-900 border-zinc-700' : 'border-dashed border-zinc-700 hover:border-zinc-500 bg-zinc-800/50 text-zinc-500 hover:text-zinc-300'
-                }`}
-                onClick={() => !src && handleSlotClick(i)}
-              >
-                {src ? (
-                  <>
-                    <img src={src} alt={`Slot ${i + 1}`} className="w-full h-full object-cover" />
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); removeImage(i); }}
-                      className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors"
-                    >
-                      <X size={16} />
-                    </button>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center gap-2">
-                    <Upload size={24} />
-                    <span className="text-xs font-medium">Slot {i + 1}</span>
+              <div key={i} className="flex flex-col gap-2 bg-zinc-800/30 p-3 rounded-xl border border-white/5">
+                <div className="flex items-center gap-3">
+                  {/* Main Image */}
+                  <div 
+                    className={`relative flex-1 aspect-square rounded-xl overflow-hidden border-2 transition-colors cursor-pointer flex items-center justify-center ${
+                      src ? 'bg-zinc-900 border-zinc-700' : 'border-dashed border-zinc-700 hover:border-zinc-500 bg-zinc-800/50 text-zinc-500 hover:text-zinc-300'
+                    }`}
+                    onClick={() => !src && handleSlotClick(i, false)}
+                  >
+                    {src ? (
+                      <>
+                        <img src={src} alt={`Slot ${i + 1}`} className="w-full h-full object-cover" />
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); removeImage(i, false); }}
+                          className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors"
+                        >
+                          <X size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <Upload size={24} />
+                        <span className="text-xs font-medium">Main {i + 1}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Vertical Gain Slider */}
+                  {src && (
+                    <div className="flex flex-col items-center gap-1 h-full py-2">
+                      <span className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider">Gain</span>
+                      <div className="h-24 w-6 flex items-center justify-center relative">
+                        <input 
+                          type="range" min="0" max="2" step="0.1"
+                          value={imageWeights[i]}
+                          onChange={(e) => {
+                            const newWeights = [...imageWeights];
+                            newWeights[i] = parseFloat(e.target.value);
+                            setImageWeights(newWeights);
+                          }}
+                          className="accent-emerald-500 absolute w-24 h-1.5 bg-zinc-700 rounded-full appearance-none"
+                          style={{ transform: 'rotate(-90deg)' }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                      <span className="text-xs text-zinc-300 font-mono">{imageWeights[i].toFixed(1)}</span>
+                    </div>
+                  )}
+
+                  {/* Alt Image */}
+                  <div 
+                    className={`relative flex-1 aspect-square rounded-xl overflow-hidden border-2 transition-colors cursor-pointer flex items-center justify-center ${
+                      altImages[i] && altImages[i] !== DEFAULT_ALT_IMAGE ? 'bg-zinc-900 border-zinc-700' : 'border-dashed border-zinc-700 hover:border-zinc-500 bg-zinc-800/50 text-zinc-500 hover:text-zinc-300'
+                    }`}
+                    onClick={() => handleSlotClick(i, true)}
+                  >
+                    {altImages[i] && altImages[i] !== DEFAULT_ALT_IMAGE ? (
+                      <>
+                        <img src={altImages[i]!} alt={`Alt Slot ${i + 1}`} className="w-full h-full object-cover" />
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); removeImage(i, true); }}
+                          className="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors"
+                        >
+                          <X size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2">
+                        <Upload size={24} />
+                        <span className="text-xs font-medium">Alt {i + 1}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Horizontal Balance Slider */}
+                {src && (
+                  <div className="flex items-center gap-3 px-2 pt-2 border-t border-white/5 mt-1">
+                    <span className="text-xs text-zinc-400 font-medium w-10">Main</span>
+                    <input 
+                      type="range" min="0" max="1" step="0.05"
+                      value={imageBalances[i]}
+                      onChange={(e) => {
+                        const newBalances = [...imageBalances];
+                        newBalances[i] = parseFloat(e.target.value);
+                        setImageBalances(newBalances);
+                      }}
+                      className="flex-1 accent-emerald-500 h-1.5 bg-zinc-700 rounded-full appearance-none"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <span className="text-xs text-zinc-400 font-medium w-10 text-right">Alt</span>
                   </div>
                 )}
               </div>
@@ -630,55 +873,6 @@ export default function App() {
             
             <div className="flex flex-col items-center gap-4">
               <p className="text-sm text-zinc-400">Drag and drop images anywhere, or click a slot to upload.</p>
-              <div className="flex flex-wrap justify-center gap-3">
-                {activeImageCount > 0 && activeImageCount === activeLoadedCount ? (
-                  <>
-                    <button
-                      onClick={() => {
-                        startTimeRef.current = performance.now();
-                        setIsStarted(true);
-                        audioRefs.forEach((ref, i) => {
-                          if (ref.current && ref.current.src) {
-                            ref.current.currentTime = audioTracks[i].offset;
-                            ref.current.play().catch(e => console.error("Audio playback failed:", e));
-                          }
-                        });
-                      }}
-                      className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full font-medium transition-colors shadow-lg shadow-emerald-500/20"
-                    >
-                      Start
-                    </button>
-                    <button
-                      onClick={() => setIsStarted(true)}
-                      className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-full font-medium transition-colors border border-white/10"
-                    >
-                      Fullscreen
-                    </button>
-                    <button
-                      onClick={() => {
-                        startTimeRef.current = performance.now();
-                        audioRefs.forEach((ref, i) => {
-                          if (ref.current && ref.current.src) {
-                            ref.current.currentTime = audioTracks[i].offset;
-                            ref.current.play().catch(e => console.error("Audio playback failed:", e));
-                          }
-                        });
-                      }}
-                      className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-full font-medium transition-colors border border-white/10 flex items-center gap-2"
-                    >
-                      <RefreshCw size={16} />
-                      Restart
-                    </button>
-                  </>
-                ) : activeImageCount > 0 ? (
-                  <button
-                    disabled
-                    className="px-6 py-2 bg-emerald-500 text-white rounded-full font-medium opacity-50 cursor-not-allowed shadow-lg shadow-emerald-500/20"
-                  >
-                    Loading...
-                  </button>
-                ) : null}
-              </div>
             </div>
             
             <input 
@@ -690,27 +884,90 @@ export default function App() {
             />
           </div>
 
-          {/* Noise Settings Column */}
-          <div className="space-y-3 bg-zinc-900/60 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/10">
-            <div className="flex items-center gap-2 mb-2">
+          {/* Middle Column */}
+          <div className="flex flex-col gap-4">
+            {/* Controls Panel */}
+            <div className="bg-zinc-900/60 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/10 flex flex-col items-center justify-center gap-4">
+              <div className="flex flex-wrap justify-center gap-3 w-full">
+                {activeImageCount > 0 && activeImageCount === activeLoadedCount ? (
+                  <>
+                    <div className="flex gap-3 w-full">
+                      <button
+                        onClick={() => {
+                          startTimeRef.current = performance.now();
+                          setIsStarted(true);
+                          audioRefs.forEach((ref, i) => {
+                            if (ref.current && ref.current.src) {
+                              ref.current.currentTime = audioTracks[i].offset;
+                              ref.current.play().catch(e => console.error("Audio playback failed:", e));
+                            }
+                          });
+                        }}
+                        className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-full font-medium transition-colors shadow-lg shadow-emerald-500/20"
+                      >
+                        Start
+                      </button>
+                      <button
+                        onClick={() => {
+                          startTimeRef.current = performance.now();
+                          audioRefs.forEach((ref, i) => {
+                            if (ref.current && ref.current.src) {
+                              ref.current.currentTime = audioTracks[i].offset;
+                              ref.current.play().catch(e => console.error("Audio playback failed:", e));
+                            }
+                          });
+                        }}
+                        className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-full font-medium transition-colors border border-white/10 flex items-center justify-center gap-2"
+                      >
+                        <RefreshCw size={16} />
+                        Restart
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsStarted(false);
+                          audioRefs.forEach(ref => {
+                            if (ref.current) {
+                              ref.current.pause();
+                            }
+                          });
+                        }}
+                        className="flex-1 py-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full font-medium transition-colors border border-white/10"
+                      >
+                        Stop
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => setIsStarted(true)}
+                      onMouseEnter={() => setIsPreviewing(true)}
+                      onMouseLeave={() => setIsPreviewing(false)}
+                      className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-full font-medium transition-colors border border-white/10"
+                    >
+                      Fullscreen
+                    </button>
+                  </>
+                ) : activeImageCount > 0 ? (
+                  <button
+                    disabled
+                    className="px-6 py-2 bg-emerald-500 text-white rounded-full font-medium opacity-50 cursor-not-allowed shadow-lg shadow-emerald-500/20 w-full"
+                  >
+                    Loading...
+                  </button>
+                ) : (
+                  <div className="py-2 text-zinc-500 text-sm font-medium">
+                    Add images to start
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Noise Settings Panel */}
+            <div className="space-y-3 bg-zinc-900/60 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/10">
+              <div className="flex items-center gap-2 mb-2">
               <Sliders size={18} className="text-zinc-300" />
               <h2 className="text-sm font-medium text-zinc-300 uppercase tracking-wider">Noise Settings</h2>
             </div>
             
             <div className="grid grid-cols-1 gap-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <label className="text-zinc-300">Noise Scale</label>
-                  <span className="text-zinc-500">{noiseParams.scale.toFixed(1)}</span>
-                </div>
-                <input 
-                  type="range" min="0.5" max="10.0" step="0.1" 
-                  value={noiseParams.scale}
-                  onChange={e => setNoiseParams(p => ({...p, scale: parseFloat(e.target.value)}))}
-                  className="w-full accent-emerald-500"
-                />
-              </div>
-              
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <label className="text-zinc-300">Time Speed</label>
@@ -724,6 +981,32 @@ export default function App() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <label className="text-zinc-300">Time Offset</label>
+                  <span className="text-zinc-500">{noiseParams.timeOffset.toFixed(1)}s</span>
+                </div>
+                <input 
+                  type="range" min="-60.0" max="60.0" step="0.1" 
+                  value={noiseParams.timeOffset}
+                  onChange={e => setNoiseParams(p => ({...p, timeOffset: parseFloat(e.target.value)}))}
+                  className="w-full accent-emerald-500"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <label className="text-zinc-300">Noise Scale</label>
+                  <span className="text-zinc-500">{noiseParams.scale.toFixed(1)}</span>
+                </div>
+                <input 
+                  type="range" min="0.5" max="10.0" step="0.1" 
+                  value={noiseParams.scale}
+                  onChange={e => setNoiseParams(p => ({...p, scale: parseFloat(e.target.value)}))}
+                  className="w-full accent-emerald-500"
+                />
+              </div>
+              
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <label className="text-zinc-300">Warp Strength</label>
@@ -758,6 +1041,7 @@ export default function App() {
                 </div>
               </div>
             </div>
+          </div>
           </div>
 
           {/* Audio Column */}
