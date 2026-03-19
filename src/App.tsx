@@ -1080,37 +1080,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* MIDI Settings Panel */}
-            <div className="space-y-3 bg-zinc-900/60 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/10">
-              <div className="flex items-center gap-2 mb-2">
-                <Activity size={18} className="text-zinc-300" />
-                <h2 className="text-sm font-medium text-zinc-300 uppercase tracking-wider">MIDI Controller</h2>
-              </div>
-              
-              <select 
-                value={selectedMidiInputId}
-                onChange={(e) => setSelectedMidiInputId(e.target.value)}
-                className="w-full bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 transition-colors"
-              >
-                <option value="">Select MIDI Device...</option>
-                {midiInputs.map(input => (
-                  <option key={input.id} value={input.id}>{input.name || `Device ${input.id}`}</option>
-                ))}
-              </select>
-
-              <div className="bg-zinc-950/50 rounded-lg p-3 h-32 overflow-y-auto font-mono text-xs text-zinc-400 flex flex-col gap-1 border border-white/5">
-                {midiLog.length === 0 ? (
-                  <span className="text-zinc-600 italic">Waiting for CC events...</span>
-                ) : (
-                  midiLog.map((log, i) => (
-                    <div key={log.id} className={i === 0 ? "text-emerald-400 font-medium" : "opacity-70"}>
-                      {log.text}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
             {/* Noise Settings Panel */}
             <div className="space-y-3 bg-zinc-900/60 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/10">
               <div className="flex items-center gap-2 mb-2">
@@ -1193,6 +1162,35 @@ export default function App() {
               </div>
             </div>
           </div>
+
+            {/* MIDI Settings Panel */}
+            <div className="space-y-3 bg-zinc-900/60 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-white/10">
+              <div className="flex items-center gap-2 mb-2">
+                <Activity size={18} className="text-zinc-300" />
+                <h2 className="text-sm font-medium text-zinc-300 uppercase tracking-wider">MIDI Controller</h2>
+              </div>
+              
+              <select 
+                value={selectedMidiInputId}
+                onChange={(e) => setSelectedMidiInputId(e.target.value)}
+                className="w-full bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 transition-colors"
+              >
+                <option value="">Select MIDI Device...</option>
+                {midiInputs.map(input => (
+                  <option key={input.id} value={input.id}>{input.name || `Device ${input.id}`}</option>
+                ))}
+              </select>
+
+              <div className="bg-zinc-950/50 rounded-lg p-3 font-mono text-xs text-zinc-400 flex flex-col gap-1 border border-white/5">
+                {midiLog.length === 0 ? (
+                  <span className="text-zinc-600 italic">Waiting for CC events...</span>
+                ) : (
+                  <div className="text-emerald-400 font-medium">
+                    {midiLog[0].text}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Audio Column */}
