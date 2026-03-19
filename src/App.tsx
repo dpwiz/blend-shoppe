@@ -230,6 +230,22 @@ export default function App() {
   const [loadedAltImages, setLoadedAltImages] = useState<(HTMLImageElement | null)[]>([null, null, null, null]);
   const [isStarted, setIsStarted] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [canvasMode, setCanvasMode] = useState<'cover' | 'contain' | 'fill'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = sessionStorage.getItem('canvasMode');
+      if (saved === 'cover' || saved === 'contain' || saved === 'fill') {
+        return saved;
+      }
+    }
+    return 'cover';
+  });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('canvasMode', canvasMode);
+    }
+  }, [canvasMode]);
+
   const [imageWeights, setImageWeights] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = sessionStorage.getItem('imageWeights');
@@ -844,10 +860,14 @@ export default function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center relative overflow-hidden">
       {/* Background / Fullscreen Canvas */}
-      <div className={`fixed inset-0 z-0 transition-all duration-700 ${isStarted ? 'bg-black' : isPreviewing ? 'opacity-100 blur-none pointer-events-none' : 'opacity-30 blur-sm pointer-events-none'}`}>
+      <div className={`fixed inset-0 z-0 transition-all duration-700 flex items-center justify-center ${isStarted ? 'bg-black' : isPreviewing ? 'opacity-100 blur-none pointer-events-none' : 'opacity-30 blur-sm pointer-events-none'}`}>
         <canvas
           ref={canvasRef}
-          className="w-full h-full transition-all duration-700 object-cover"
+          className={`w-full h-full transition-all duration-700 ${
+            canvasMode === 'cover' ? 'object-cover' : 
+            canvasMode === 'contain' ? 'object-contain' : 
+            'object-fill'
+          }`}
         />
       </div>
 
@@ -1056,14 +1076,25 @@ export default function App() {
                         Stop
                       </button>
                     </div>
-                    <button
-                      onClick={() => setIsStarted(true)}
-                      onMouseEnter={() => setIsPreviewing(true)}
-                      onMouseLeave={() => setIsPreviewing(false)}
-                      className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-full font-medium transition-colors border border-white/10"
-                    >
-                      Fullscreen
-                    </button>
+                    <div className="flex flex-col gap-2 w-full">
+                      <button
+                        onClick={() => setIsStarted(true)}
+                        onMouseEnter={() => setIsPreviewing(true)}
+                        onMouseLeave={() => setIsPreviewing(false)}
+                        className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-full font-medium transition-colors border border-white/10"
+                      >
+                        Fullscreen
+                      </button>
+                      <select
+                        value={canvasMode}
+                        onChange={(e) => setCanvasMode(e.target.value as any)}
+                        className="w-full bg-zinc-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 transition-colors"
+                      >
+                        <option value="cover">Zoom (Cover)</option>
+                        <option value="contain">Letterbox (Contain)</option>
+                        <option value="fill">Stretch (Fill)</option>
+                      </select>
+                    </div>
                   </>
                 ) : activeImageCount > 0 ? (
                   <button
